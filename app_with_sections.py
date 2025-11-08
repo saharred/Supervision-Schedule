@@ -161,7 +161,9 @@ def assign_supervisors_smart(exams_df, teachers_df, sections_df):
         level = exam['level']
         
         # Determine if this is level 1 or level 2
-        is_level_one = 'أول' in level or 'الأول' in level or 'ثاني' in level or 'الثاني' in level
+        # Level 1 (Grade 1): Teachers only
+        # Level 2 (Grades 2-4): Teachers + Teaching Assistants
+        is_level_one = 'أول' in level or 'الأول' in level
         
         # Assign supervisor 1 (always a teacher)
         available_teachers = [
