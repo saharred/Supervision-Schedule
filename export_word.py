@@ -370,10 +370,16 @@ def export_to_word(daily_schedule, school_name="مدرسة عثمان بن عف�
     run.font.size = Pt(10)
     run.font.italic = True
     
-    # Save to buffer
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
+    # Save to file
+    import tempfile
+    import os
     
-    return buffer
+    # Create temp file
+    fd, temp_path = tempfile.mkstemp(suffix='.docx')
+    os.close(fd)
+    
+    # Save document
+    doc.save(temp_path)
+    
+    return temp_path
 

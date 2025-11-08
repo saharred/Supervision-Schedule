@@ -272,6 +272,18 @@ def export_to_pdf_v2(daily_schedule, school_name="مدرسة عثمان بن ع�
     # Build PDF
     doc.build(content)
     
+    # Save to file
+    import tempfile
+    import os
+    
+    # Create temp file
+    fd, temp_path = tempfile.mkstemp(suffix='.pdf')
+    os.close(fd)
+    
+    # Write buffer to file
     buffer.seek(0)
-    return buffer
+    with open(temp_path, 'wb') as f:
+        f.write(buffer.getvalue())
+    
+    return temp_path
 
