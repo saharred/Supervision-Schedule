@@ -1,7 +1,8 @@
 """
-Complete Exam Supervision Schedule Generator with Sections Support
-- Level 1 (Grade 1-2): Teachers only
-- Level 2 (Grade 3-4): Teachers + Teaching Assistants (Sections)
+Complete Exam Supervision Schedule Generator with Sections Support V2
+- Correct specialty exclusion (exclude same specialty as exam)
+- Correct section matching (match section with grade level)
+- Comprehensive statistics
 """
 
 import streamlit as st
@@ -85,8 +86,29 @@ def parse_date_arabic(date_str):
         return datetime(int(year), int(month), int(day))
     return None
 
+def normalize_grade_name(grade_str):
+    """Normalize grade names for matching"""
+    grade_str = str(grade_str).strip()
+    # Map variations to standard forms
+    mapping = {
+        'الأول': 'أول',
+        'الثاني': 'ثاني',
+        'الثالث': 'ثالث',
+        'الرابع': 'رابع'
+    }
+    for old, new in mapping.items():
+        grade_str = grade_str.replace(old, new)
+    return grade_str
+
+def normalize_subject_name(subject_str):
+    """Normalize subject names for matching"""
+    subject_str = str(subject_str).strip()
+    # Remove parentheses content
+    subject_str = re.sub(r'\([^)]*\)', '', subject_str).strip()
+    return subject_str
+
 def parse_exam_schedule(file):
-    """Parse exam schedule from Excel file"""
+    """Parse exam schedule from Excel file and expand by sections"""
     df = pd.read_excel(file)
     
     exams = []
@@ -96,7 +118,7 @@ def parse_exam_schedule(file):
         if not date:
             continue
         
-        level = str(row['المستوى']).strip()
+        level = normalize_grade_name(str(row['المستوى']).strip())
         
         # Parse session 2
         if pd.notna(row['الحصة الثانية']) and str(row['الحصة الثانية']).strip() != '':
@@ -108,6 +130,7 @@ def parse_exam_schedule(file):
                     'start_time': '08:00',
                     'end_time': '10:00',
                     'subject': subject,
+                    'subject_normalized': normalize_subject_name(subject),
                     'level': level,
                     'grade': level,
                     'section': '',
@@ -125,6 +148,7 @@ def parse_exam_schedule(file):
                     'start_time': '10:30',
                     'end_time': '12:30',
                     'subject': subject,
+                    'subject_normalized': normalize_subject_name(subject),
                     'level': level,
                     'grade': level,
                     'section': '',
@@ -134,16 +158,53 @@ def parse_exam_schedule(file):
     
     return pd.DataFrame(exams)
 
-def assign_supervisors_smart(exams_df, teachers_df, sections_df):
+def expand_exams_by_sections(exams_df, sections_df):
     """
-    Assign supervisors intelligently:
-    - Level 1 (أول): Teachers only
-    - Level 2 (الثاني): Teachers + Sections (Teaching Assistants)
+    Expand each exam to multiple rows, one per section
+    Example: Exam for grade 'ثالث' → 5 rows for ثالث1, ثالث2, ثالث3, ثالث4, ثالث5
+    """
+    if sections_df is None or len(sections_df) == 0:
+        return exams_df
+    
+    # Extract grade from section names
+    sections_df = sections_df.copy()
+    sections_df['grade'] = sections_df['الصف'].str.extract(r'(أول|ثاني|ثالث|رابع)')[0]
+    
+    expanded_exams = []
+    
+    for _, exam in exams_df.iterrows():
+        exam_grade = exam['grade']
+        
+        # Find all sections for this grade
+        matching_sections = sections_df[sections_df['grade'] == exam_grade]['الصف'].tolist()
+        
+        if matching_sections:
+            # Create one exam row per section
+            for section in matching_sections:
+                exam_copy = exam.copy()
+                exam_copy['section'] = section
+                expanded_exams.append(exam_copy)
+        else:
+            # No sections found, keep original
+            expanded_exams.append(exam)
+    
+    return pd.DataFrame(expanded_exams)
+
+def assign_supervisors_smart_v2(exams_df, teachers_df, sections_df):
+    """
+    Assign supervisors intelligently V2:
+    - Supervisor 1: Teacher with DIFFERENT specialty (exclude same specialty)
+    - Supervisor 2: 
+      * Grade 1 (أول): Another teacher with different specialty
+      * Grades 2-4 (ثاني، ثالث، رابع): Matching section from sections_df
     """
     
-    # Prepare teachers list
+    # Prepare teachers list with normalized specialties
+    teachers_df = teachers_df.copy()
+    teachers_df['specialty_normalized'] = teachers_df['specialty'].apply(normalize_subject_name)
+    
     teachers_list = teachers_df['teacher_name'].tolist()
-    teacher_specialty = dict(zip(teachers_df['teacher_name'], teachers_df['specialty']))
+    teacher_specialty = dict(zip(teachers_df['teacher_name'], teachers_df['specialty_normalized']))
     
     # Prepare sections list
     sections_list = sections_df['الصف'].tolist() if sections_df is not None else []
@@ -157,54 +218,39 @@ def assign_supervisors_smart(exams_df, teachers_df, sections_df):
     # Assign supervisors
     for idx, exam in exams_df.iterrows():
         date_str = exam['date'].strftime('%Y-%m-%d')
-        subject = exam['subject']
+        subject_normalized = exam['subject_normalized']
         level = exam['level']
+        section = exam['section']
         
-        # Determine if this is level 1 or level 2
-        # Level 1 (Grade 1): Teachers only
-        # Level 2 (Grades 2-4): Teachers + Teaching Assistants
-        is_level_one = 'أول' in level or 'الأول' in level
+        # Determine if this is grade 1 (أول) or grades 2-4
+        is_grade_one = 'أول' in level
         
-        # Assign supervisor 1 (always a teacher)
+        # === Assign Supervisor 1 (always a teacher with DIFFERENT specialty) ===
         available_teachers = [
             t for t in teachers_list
             if teacher_daily_count[t][date_str] < 3
+            and teacher_specialty.get(t, '').strip() != subject_normalized.strip()  # EXCLUDE same specialty
         ]
-        
-        # Prefer different specialty
-        different_specialty = [
-            t for t in available_teachers
-            if teacher_specialty.get(t, '').strip() != subject.strip()
-        ]
-        
-        if different_specialty:
-            available_teachers = different_specialty
         
         # Sort by total count (load balancing)
         available_teachers.sort(key=lambda t: teacher_total_count[t])
         
+        supervisor1 = None
         if available_teachers:
             supervisor1 = available_teachers[0]
             exams_df.at[idx, 'supervisor1'] = supervisor1
             teacher_daily_count[supervisor1][date_str] += 1
             teacher_total_count[supervisor1] += 1
         
-        # Assign supervisor 2
-        if is_level_one:
-            # Level 1: Another teacher
+        # === Assign Supervisor 2 ===
+        if is_grade_one:
+            # Grade 1: Another teacher with different specialty
             available_teachers2 = [
                 t for t in teachers_list
-                if t != supervisor1 and teacher_daily_count[t][date_str] < 3
+                if t != supervisor1 
+                and teacher_daily_count[t][date_str] < 3
+                and teacher_specialty.get(t, '').strip() != subject_normalized.strip()  # EXCLUDE same specialty
             ]
-            
-            # Prefer different specialty
-            different_specialty2 = [
-                t for t in available_teachers2
-                if teacher_specialty.get(t, '').strip() != subject.strip()
-            ]
-            
-            if different_specialty2:
-                available_teachers2 = different_specialty2
             
             # Sort by total count
             available_teachers2.sort(key=lambda t: teacher_total_count[t])
@@ -215,23 +261,14 @@ def assign_supervisors_smart(exams_df, teachers_df, sections_df):
                 teacher_daily_count[supervisor2][date_str] += 1
                 teacher_total_count[supervisor2] += 1
         else:
-            # Level 2: Section (Teaching Assistant)
-            if sections_list:
-                available_sections = [
-                    s for s in sections_list
-                    if section_daily_count[s][date_str] < 3
-                ]
-                
-                # Sort by total count
-                available_sections.sort(key=lambda s: section_total_count[s])
-                
-                if available_sections:
-                    supervisor2 = available_sections[0]
-                    exams_df.at[idx, 'supervisor2'] = supervisor2
-                    section_daily_count[supervisor2][date_str] += 1
-                    section_total_count[supervisor2] += 1
+            # Grades 2-4: Use the MATCHING section
+            if section and section in sections_list:
+                # Assign the exact matching section
+                exams_df.at[idx, 'supervisor2'] = section
+                section_daily_count[section][date_str] += 1
+                section_total_count[section] += 1
     
-    return exams_df
+    return exams_df, teacher_total_count, section_total_count
 
 # Sidebar
 st.sidebar.title("⚙️ إعدادات المدرسة")
@@ -301,129 +338,160 @@ def main():
         exams_df = parse_exam_schedule(exam_file)
         st.success(f"✅ تم تحليل {len(exams_df)} اختبار")
         
-        # Show data preview
-        with st.expander("🔍 معاينة البيانات"):
-            st.write("**المعلمات:**", teachers_df.head())
-            if sections_df is not None:
-                st.write("**الشعب:**", sections_df.head())
-            st.write("**الاختبارات:**", exams_df.head())
+        # Expand exams by sections
+        exams_expanded_df = expand_exams_by_sections(exams_df, sections_df)
+        st.info(f"📊 بعد التوسع حسب الشعب: {len(exams_expanded_df)} صف اختبار")
         
-        # Assignment button
-        st.markdown("---")
+        # Distribute supervisors
         if st.button("🎯 توزيع المراقبين تلقائياً", use_container_width=True):
             with st.spinner("جاري التوزيع..."):
-                exams_df = assign_supervisors_smart(exams_df, teachers_df, sections_df)
-                st.session_state['assigned_exams'] = exams_df
+                result_df, teacher_counts, section_counts = assign_supervisors_smart_v2(
+                    exams_expanded_df, teachers_df, sections_df
+                )
+                
+                # Store in session state
+                st.session_state['result_df'] = result_df
+                st.session_state['teacher_counts'] = teacher_counts
+                st.session_state['section_counts'] = section_counts
+                st.session_state['teachers_df'] = teachers_df
+                st.session_state['school_name'] = school_name
+                st.session_state['school_name_en'] = school_name_en
+                st.session_state['academic_year'] = academic_year
+                st.session_state['semester'] = semester
+                
                 st.success("✅ تم التوزيع بنجاح!")
         
         # Display results
-        if 'assigned_exams' in st.session_state:
-            exams_df = st.session_state['assigned_exams']
-            
-            # Group by date
-            dates = sorted(exams_df['date'].unique())
+        if 'result_df' in st.session_state:
+            result_df = st.session_state['result_df']
+            teacher_counts = st.session_state['teacher_counts']
+            section_counts = st.session_state['section_counts']
             
             st.markdown("---")
-            st.header("📅 الجداول اليومية")
+            st.subheader("📋 نتائج التوزيع")
             
-            for date in dates:
-                day_exams = exams_df[exams_df['date'] == date].copy()
-                day_name = get_day_name_arabic(date)
-                date_str = date.strftime('%Y-%m-%d')
+            # Prepare display dataframe
+            display_df = result_df.copy()
+            display_df['التاريخ'] = display_df['date'].dt.strftime('%Y-%m-%d')
+            display_df['اليوم'] = display_df['date'].apply(get_day_name_arabic)
+            
+            display_columns = {
+                'التاريخ': display_df['التاريخ'],
+                'اليوم': display_df['اليوم'],
+                'الحصة': display_df['session'],
+                'المادة': display_df['subject'],
+                'الصف': display_df['section'],
+                'المراقب الأول': display_df['supervisor1'],
+                'المراقب الثاني': display_df['supervisor2']
+            }
+            
+            display_final = pd.DataFrame(display_columns)
+            st.dataframe(display_final, use_container_width=True, height=400)
+            
+            # Statistics
+            st.markdown("---")
+            st.subheader("📊 الإحصائيات")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### 👩‍🏫 إحصائيات المعلمات")
                 
-                st.subheader(f"{day_name} - {date_str}")
+                # Calculate percentages
+                total_teacher_assignments = sum(teacher_counts.values())
                 
-                # Display table
-                display_df = day_exams[['session', 'subject', 'level', 'supervisor1', 'supervisor2']].copy()
-                display_df.columns = ['الحصة', 'المادة', 'المستوى', 'المراقب 1', 'المراقب 2']
-                st.dataframe(display_df, use_container_width=True)
+                teacher_stats = []
+                for teacher, count in sorted(teacher_counts.items(), key=lambda x: x[1], reverse=True):
+                    percentage = (count / total_teacher_assignments * 100) if total_teacher_assignments > 0 else 0
+                    teacher_stats.append({
+                        'اسم المعلمة': teacher,
+                        'عدد المراقبات': count,
+                        'النسبة المئوية': f"{percentage:.1f}%"
+                    })
                 
-                # Export buttons
-                col1, col2 = st.columns(2)
+                teacher_stats_df = pd.DataFrame(teacher_stats)
+                st.dataframe(teacher_stats_df, use_container_width=True, height=300)
                 
-                with col1:
-                    if st.button(f"📄 تصدير Word - {day_name}", key=f"word_{date_str}"):
-                        # Prepare daily schedule dict
-                        daily_schedule = {
-                            'date': date,
-                            'day_name': day_name,
-                            'exams': day_exams.to_dict('records')
-                        }
-                        word_file = export_to_word(
-                            daily_schedule,
-                            school_name,
-                            academic_year,
-                            f"{day_name} - {date_str}",
-                            semester
-                        )
-                        with open(word_file, 'rb') as f:
-                            st.download_button(
-                                label=f"⬇️ تحميل Word - {day_name}",
-                                data=f,
-                                file_name=f"جدول_المراقبة_{day_name}_{date_str}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                key=f"download_word_{date_str}"
+                st.metric("إجمالي مراقبات المعلمات", total_teacher_assignments)
+            
+            with col2:
+                st.markdown("### 🏫 إحصائيات الشعب")
+                
+                if section_counts:
+                    total_section_assignments = sum(section_counts.values())
+                    
+                    section_stats = []
+                    for section, count in sorted(section_counts.items(), key=lambda x: x[1], reverse=True):
+                        percentage = (count / total_section_assignments * 100) if total_section_assignments > 0 else 0
+                        section_stats.append({
+                            'الشعبة': section,
+                            'عدد المراقبات': count,
+                            'النسبة المئوية': f"{percentage:.1f}%"
+                        })
+                    
+                    section_stats_df = pd.DataFrame(section_stats)
+                    st.dataframe(section_stats_df, use_container_width=True, height=300)
+                    
+                    st.metric("إجمالي مراقبات الشعب", total_section_assignments)
+                else:
+                    st.info("لا توجد شعب في التوزيع")
+            
+            # Export buttons
+            st.markdown("---")
+            st.subheader("📥 تصدير الجداول")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📄 تصدير إلى Word", use_container_width=True):
+                    with st.spinner("جاري إنشاء ملف Word..."):
+                        try:
+                            word_path = export_to_word(
+                                result_df,
+                                school_name,
+                                school_name_en,
+                                academic_year,
+                                semester
                             )
-                
-                with col2:
-                    if st.button(f"📕 تصدير PDF - {day_name}", key=f"pdf_{date_str}"):
-                        # Prepare daily schedule dict
-                        daily_schedule = {
-                            'date': date,
-                            'day_name': day_name,
-                            'exams': day_exams.to_dict('records')
-                        }
-                        pdf_file = export_to_pdf_v2(
-                            daily_schedule,
-                            school_name,
-                            academic_year,
-                            f"{day_name} - {date_str}",
-                            semester
-                        )
-                        with open(pdf_file, 'rb') as f:
-                            st.download_button(
-                                label=f"⬇️ تحميل PDF - {day_name}",
-                                data=f,
-                                file_name=f"جدول_المراقبة_{day_name}_{date_str}.pdf",
-                                mime="application/pdf",
-                                key=f"download_pdf_{date_str}"
+                            
+                            with open(word_path, 'rb') as f:
+                                st.download_button(
+                                    label="⬇️ تحميل ملف Word",
+                                    data=f,
+                                    file_name="جدول_المراقبة.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True
+                                )
+                        except Exception as e:
+                            st.error(f"❌ خطأ في التصدير: {str(e)}")
+            
+            with col2:
+                if st.button("📕 تصدير إلى PDF", use_container_width=True):
+                    with st.spinner("جاري إنشاء ملف PDF..."):
+                        try:
+                            pdf_path = export_to_pdf_v2(
+                                result_df,
+                                school_name,
+                                school_name_en,
+                                academic_year,
+                                semester
                             )
-                
-                st.markdown("---")
-        
+                            
+                            with open(pdf_path, 'rb') as f:
+                                st.download_button(
+                                    label="⬇️ تحميل ملف PDF",
+                                    data=f,
+                                    file_name="جدول_المراقبة.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                        except Exception as e:
+                            st.error(f"❌ خطأ في التصدير: {str(e)}")
+    
     except Exception as e:
         st.error(f"❌ حدث خطأ: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
-
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.markdown("""
-### 💡 نصائح الاستخدام
-
-**ملف المعلمات:**
-- يجب أن يحتوي على عمود `اسم المعلم`
-- يمكن أن يحتوي على عمود `المادة الدراسية`
-
-**ملف الشعب:**
-- يحتوي على عمود `الصف`
-- مثال: أول1، أول2، ثالث1، إلخ
-- يُستخدم للمستوى الثاني فقط
-
-**جدول الاختبارات:**
-- يجب أن يحتوي على الأعمدة:
-  - اليوم والتاريخ
-  - الحصة الثانية
-  - الحصة الثالثة والرابعة
-  - المستوى
-
----
-
-**تم التطوير بواسطة:** سحر عثمان  
-**البريد:** Sahar.Osman@education.qa  
-**المدرسة:** مدرسة عثمان بن عفان النموذجية للبنين  
-**الدولة:** قطر 🇶🇦
-""")
 
 if __name__ == "__main__":
     main()
