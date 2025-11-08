@@ -341,14 +341,18 @@ def main():
                 
                 with col1:
                     if st.button(f"📄 تصدير Word - {day_name}", key=f"word_{date_str}"):
+                        # Prepare daily schedule dict
+                        daily_schedule = {
+                            'date': date,
+                            'day_name': day_name,
+                            'exams': day_exams.to_dict('records')
+                        }
                         word_file = export_to_word(
-                            day_exams,
+                            daily_schedule,
                             school_name,
-                            school_name_en,
                             academic_year,
-                            semester,
-                            day_name,
-                            date_str
+                            f"{day_name} - {date_str}",
+                            semester
                         )
                         with open(word_file, 'rb') as f:
                             st.download_button(
@@ -361,14 +365,18 @@ def main():
                 
                 with col2:
                     if st.button(f"📕 تصدير PDF - {day_name}", key=f"pdf_{date_str}"):
+                        # Prepare daily schedule dict
+                        daily_schedule = {
+                            'date': date,
+                            'day_name': day_name,
+                            'exams': day_exams.to_dict('records')
+                        }
                         pdf_file = export_to_pdf_v2(
-                            day_exams,
+                            daily_schedule,
                             school_name,
-                            school_name_en,
                             academic_year,
-                            semester,
-                            day_name,
-                            date_str
+                            f"{day_name} - {date_str}",
+                            semester
                         )
                         with open(pdf_file, 'rb') as f:
                             st.download_button(
