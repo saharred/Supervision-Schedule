@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# Logs
+*.log
+nohup.out
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# User uploaded data (keep samples)
+*.xlsx
+*.xls
+*.pdf
+!data_samples/*.xlsx
+!data_samples/*.xls
+
