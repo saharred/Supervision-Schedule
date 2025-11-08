@@ -111,16 +111,39 @@ def get_eligible_teachers(teachers_df, exam_subject, exam_date, start_time, end_
     return eligible
 
 
-def distribute_invigilators(teachers_df, exams_df):
+def get_available_levels(exams_df):
+    """
+    Extract unique levels from exams dataframe
+    Returns: list of level names
+    """
+    if 'level' not in exams_df.columns:
+        return []
+    
+    levels = exams_df['level'].dropna().unique().tolist()
+    levels = [str(level).strip() for level in levels if str(level).strip()]
+    return sorted(levels)
+
+
+def distribute_invigilators(teachers_df, exams_df, selected_level=None):
     """
     Main distribution algorithm
     Returns: (assignments_list, warnings_list)
+    
+    Args:
+        teachers_df: DataFrame with teacher information
+        exams_df: DataFrame with exam schedule
+        selected_level: Optional - filter exams by level (e.g., 'المستوى الأول')
     """
     assignments = []
     warnings_list = []
     
     # Sort exams by date and time
     exams_df = exams_df.copy()
+    
+    # Filter by level if specified
+    if selected_level and 'level' in exams_df.columns:
+        exams_df = exams_df[exams_df['level'].str.strip() == selected_level.strip()]
+    
     exams_df['exam_date'] = pd.to_datetime(exams_df['exam_date'])
     exams_df['start_time'] = exams_df['start_time'].apply(parse_time)
     exams_df['end_time'] = exams_df['end_time'].apply(parse_time)
@@ -131,7 +154,7 @@ def distribute_invigilators(teachers_df, exams_df):
         start_time = exam['start_time']
         end_time = exam['end_time']
         subject = str(exam.get('subject', '')).strip()
-        grade = str(exam.get('grade', '')).strip()
+        level = str(exam.get('level', exam.get('grade', ''))).strip()
         section = str(exam.get('section', '')).strip()
         needed = int(exam.get('invigilators_needed', 1))
         
@@ -149,7 +172,7 @@ def distribute_invigilators(teachers_df, exams_df):
                     'start_time': start_time,
                     'end_time': end_time,
                     'subject': subject,
-                    'grade': grade,
+                    'level': level,
                     'section': section,
                     'teacher_name': teacher['teacher_name'],
                     'specialty': teacher['specialty'],
@@ -162,7 +185,7 @@ def distribute_invigilators(teachers_df, exams_df):
                     'exam_date': exam_date,
                     'time': f"{start_time} - {end_time}" if start_time and end_time else 'N/A',
                     'subject': subject,
-                    'grade_section': f"{grade} - {section}",
+                    'level_section': f"{level} - {section}",
                     'message': f'⚠️ نقص في المراقبات: مطلوب {needed}، تم تعيين {assigned_count} فقط'
                 })
     
@@ -183,12 +206,12 @@ def assignments_to_dataframe(assignments):
         axis=1
     )
     df['المادة'] = df['subject']
-    df['الصف والشعبة'] = df['grade'] + ' - ' + df['section']
+    df['المستوى والشعبة'] = df['level'] + ' - ' + df['section']
     df['اسم المراقبة'] = df['teacher_name']
     df['الملاحظات'] = df['notes']
     
     # Select and reorder columns
-    display_df = df[['التاريخ', 'الوقت', 'المادة', 'الصف والشعبة', 'اسم المراقبة', 'الملاحظات']]
+    display_df = df[['التاريخ', 'الوقت', 'المادة', 'المستوى والشعبة', 'اسم المراقبة', 'الملاحظات']]
     
     return display_df
 

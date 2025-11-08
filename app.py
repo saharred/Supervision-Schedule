@@ -9,7 +9,7 @@ from datetime import datetime
 import io
 
 # Import custom modules
-from logic import distribute_invigilators, assignments_to_dataframe, get_statistics
+from logic import distribute_invigilators, assignments_to_dataframe, get_statistics, get_available_levels
 from export import export_to_excel, export_to_pdf
 
 # Page configuration
@@ -89,6 +89,20 @@ st.markdown("""
         border-radius: 5px;
         margin: 10px 0;
     }
+    
+    .level-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        margin: 10px 0;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    
+    .level-card:hover {
+        transform: scale(1.02);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,7 +112,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; padding: 20px; background: linear-gradient(135deg, #8B0000 0%, #A52A2A 100%); border-radius: 10px; margin-bottom: 30px;'>
         <h1 style='color: white; margin: 0;'>📋 جدول المراقبة للاختبارات</h1>
-        <p style='color: #f0f0f0; margin: 10px 0 0 0;'>نظام توزيع تلقائي ذكي للمراقبات</p>
+        <p style='color: #f0f0f0; margin: 10px 0 0 0;'>نظام توزيع تلقائي ذكي للمراقبات حسب المستوى الدراسي</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -121,7 +135,7 @@ def main():
         exams_file = st.file_uploader(
             "ملف الاختبارات (exams.xlsx)",
             type=['xlsx', 'xls'],
-            help="يجب أن يحتوي على: exam_date, start_time, end_time, subject, grade, section, invigilators_needed"
+            help="يجب أن يحتوي على: exam_date, start_time, end_time, subject, level, section, invigilators_needed"
         )
         
         st.markdown("---")
@@ -129,10 +143,10 @@ def main():
         <div style='background-color: #f8f9fa; padding: 15px; border-radius: 5px;'>
             <h4 style='color: #8B0000; margin-top: 0;'>💡 نصائح الاستخدام</h4>
             <ul style='font-size: 13px; line-height: 1.8;'>
-                <li>تأكد من صحة تنسيق الملفات</li>
+                <li>استخدم عمود "level" للمستوى الدراسي</li>
                 <li>التواريخ بصيغة YYYY-MM-DD</li>
                 <li>الأوقات بصيغة HH:MM</li>
-                <li>يمكن تعديل الجدول يدوياً بعد التوليد</li>
+                <li>النظام يولد جدول منفصل لكل مستوى</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -149,7 +163,7 @@ def main():
                 st.subheader("ملف المعلمات (teachers.xlsx)")
                 sample_teachers = pd.DataFrame({
                     'teacher_name': ['فاطمة أحمد', 'نورة محمد', 'سارة علي'],
-                    'specialty': ['رياضيات', 'عربي', 'علوم'],
+                    'specialty': ['رياضيات', 'اللغة العربية', 'العلوم'],
                     'max_per_day': [3, 2, 3],
                     'unavailable': ['', '2025-01-15', '']
                 })
@@ -158,13 +172,13 @@ def main():
             with col2:
                 st.subheader("ملف الاختبارات (exams.xlsx)")
                 sample_exams = pd.DataFrame({
-                    'exam_date': ['2025-01-10', '2025-01-10'],
-                    'start_time': ['08:00', '10:00'],
-                    'end_time': ['10:00', '12:00'],
-                    'subject': ['رياضيات', 'عربي'],
-                    'grade': ['الثالث', 'الرابع'],
-                    'section': ['1', '2'],
-                    'invigilators_needed': [2, 2]
+                    'exam_date': ['2025-01-10', '2025-01-10', '2025-01-11'],
+                    'start_time': ['08:00', '08:00', '08:00'],
+                    'end_time': ['10:00', '10:00', '10:00'],
+                    'subject': ['الرياضيات', 'العلوم', 'اللغة العربية'],
+                    'level': ['المستوى الأول', 'المستوى الثاني', 'المستوى الأول'],
+                    'section': ['1', '1', '2'],
+                    'invigilators_needed': [2, 2, 2]
                 })
                 st.dataframe(sample_exams, use_container_width=True)
         
@@ -183,7 +197,7 @@ def main():
     
     # Validate columns
     required_teacher_cols = ['teacher_name', 'specialty', 'max_per_day']
-    required_exam_cols = ['exam_date', 'start_time', 'end_time', 'subject', 'grade', 'section', 'invigilators_needed']
+    required_exam_cols = ['exam_date', 'start_time', 'end_time', 'subject', 'level', 'section', 'invigilators_needed']
     
     missing_teacher = [col for col in required_teacher_cols if col not in teachers_df.columns]
     missing_exam = [col for col in required_exam_cols if col not in exams_df.columns]
@@ -196,6 +210,13 @@ def main():
             st.write(f"ملف الاختبارات: {', '.join(missing_exam)}")
         return
     
+    # Get available levels
+    available_levels = get_available_levels(exams_df)
+    
+    if not available_levels:
+        st.error("❌ لم يتم العثور على مستويات دراسية في ملف الاختبارات. تأكد من وجود عمود 'level'")
+        return
+    
     # Show data preview
     with st.expander("👀 معاينة البيانات المحملة"):
         col1, col2 = st.columns(2)
@@ -206,6 +227,35 @@ def main():
             st.subheader("الاختبارات")
             st.dataframe(exams_df.head(), use_container_width=True)
     
+    # Level selection
+    st.markdown("---")
+    st.markdown("### 📚 اختر المستوى الدراسي لتوليد جدول المراقبة")
+    
+    # Display levels as cards
+    cols = st.columns(min(len(available_levels), 4))
+    selected_level = None
+    
+    for idx, level in enumerate(available_levels):
+        with cols[idx % len(cols)]:
+            if st.button(f"📖 {level}", key=f"level_{idx}", use_container_width=True):
+                selected_level = level
+                st.session_state['selected_level'] = level
+    
+    # Get selected level from session state if exists
+    if 'selected_level' in st.session_state:
+        selected_level = st.session_state['selected_level']
+    
+    if not selected_level:
+        st.info("👆 اختر مستوى دراسي لتوليد جدول المراقبة الخاص به")
+        return
+    
+    # Show selected level
+    st.markdown(f"""
+    <div class='success-box'>
+        <h3 style='margin: 0;'>✅ المستوى المختار: {selected_level}</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # Distribution button
     st.markdown("---")
     col1, col2, col3 = st.columns([2, 1, 2])
@@ -213,111 +263,127 @@ def main():
         distribute_btn = st.button("🎯 توزيع تلقائي", use_container_width=True)
     
     # Perform distribution
-    if distribute_btn or 'assignments' in st.session_state:
+    if distribute_btn or (f'assignments_{selected_level}' in st.session_state):
         if distribute_btn:
-            with st.spinner("⏳ جاري التوزيع التلقائي..."):
-                assignments, warnings = distribute_invigilators(teachers_df, exams_df)
-                st.session_state['assignments'] = assignments
-                st.session_state['warnings'] = warnings
-                st.session_state['result_df'] = assignments_to_dataframe(assignments)
+            with st.spinner(f"⏳ جاري التوزيع التلقائي للمستوى: {selected_level}..."):
+                assignments, warnings = distribute_invigilators(teachers_df, exams_df, selected_level)
+                st.session_state[f'assignments_{selected_level}'] = assignments
+                st.session_state[f'warnings_{selected_level}'] = warnings
+                st.session_state[f'result_df_{selected_level}'] = assignments_to_dataframe(assignments)
         
-        assignments = st.session_state.get('assignments', [])
-        warnings = st.session_state.get('warnings', [])
-        result_df = st.session_state.get('result_df', pd.DataFrame())
+        assignments = st.session_state.get(f'assignments_{selected_level}', [])
+        warnings = st.session_state.get(f'warnings_{selected_level}', [])
+        result_df = st.session_state.get(f'result_df_{selected_level}', pd.DataFrame())
         
-        if not result_df.empty:
-            # Statistics
-            stats = get_statistics(assignments, teachers_df)
-            
-            st.markdown("### 📊 إحصائيات التوزيع")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
+        if result_df.empty:
+            st.warning(f"⚠️ لا توجد اختبارات للمستوى: {selected_level}")
+            return
+        
+        # Statistics
+        stats = get_statistics(assignments, teachers_df)
+        
+        st.markdown(f"### 📊 إحصائيات التوزيع - {selected_level}")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class='metric-card'>
+                <h3 style='margin: 0; color: #8B0000;'>{stats['total_assignments']}</h3>
+                <p style='margin: 5px 0 0 0; color: #666;'>إجمالي المراقبات</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class='metric-card'>
+                <h3 style='margin: 0; color: #8B0000;'>{stats['different_specialty_pct']:.1f}%</h3>
+                <p style='margin: 5px 0 0 0; color: #666;'>تخصص مختلف</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class='metric-card'>
+                <h3 style='margin: 0; color: #8B0000;'>{stats['max_load']}</h3>
+                <p style='margin: 5px 0 0 0; color: #666;'>أعلى حمل</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+            <div class='metric-card'>
+                <h3 style='margin: 0; color: #8B0000;'>{stats['min_load']}</h3>
+                <p style='margin: 5px 0 0 0; color: #666;'>أقل حمل</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Warnings
+        if warnings:
+            st.markdown("### ⚠️ تنبيهات")
+            for warning in warnings:
                 st.markdown(f"""
-                <div class='metric-card'>
-                    <h3 style='margin: 0; color: #8B0000;'>{stats['total_assignments']}</h3>
-                    <p style='margin: 5px 0 0 0; color: #666;'>إجمالي المراقبات</p>
+                <div class='warning-box'>
+                    <strong>{warning['message']}</strong><br>
+                    التاريخ: {warning['exam_date']}<br>
+                    الوقت: {warning['time']}<br>
+                    المادة: {warning['subject']}<br>
+                    المستوى والشعبة: {warning['level_section']}
                 </div>
                 """, unsafe_allow_html=True)
+        
+        # Display result table
+        st.markdown(f"### 📋 جدول المراقبة - {selected_level}")
+        st.dataframe(result_df, use_container_width=True, height=400)
+        
+        # Teacher load distribution
+        with st.expander("📊 توزيع الأحمال على المعلمات"):
+            teacher_counts = stats['teacher_counts']
+            load_df = pd.DataFrame({
+                'اسم المعلمة': list(teacher_counts.keys()),
+                'عدد المراقبات': list(teacher_counts.values())
+            }).sort_values('عدد المراقبات', ascending=False)
             
-            with col2:
-                st.markdown(f"""
-                <div class='metric-card'>
-                    <h3 style='margin: 0; color: #8B0000;'>{stats['different_specialty_pct']:.1f}%</h3>
-                    <p style='margin: 5px 0 0 0; color: #666;'>تخصص مختلف</p>
-                </div>
-                """, unsafe_allow_html=True)
+            st.dataframe(load_df, use_container_width=True)
             
-            with col3:
-                st.markdown(f"""
-                <div class='metric-card'>
-                    <h3 style='margin: 0; color: #8B0000;'>{stats['max_load']}</h3>
-                    <p style='margin: 5px 0 0 0; color: #666;'>أعلى حمل</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col4:
-                st.markdown(f"""
-                <div class='metric-card'>
-                    <h3 style='margin: 0; color: #8B0000;'>{stats['min_load']}</h3>
-                    <p style='margin: 5px 0 0 0; color: #666;'>أقل حمل</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Warnings
-            if warnings:
-                st.markdown("### ⚠️ تنبيهات")
-                for warning in warnings:
-                    st.markdown(f"""
-                    <div class='warning-box'>
-                        <strong>{warning['subject']} - {warning['grade_section']}</strong><br>
-                        التاريخ: {warning['exam_date']}<br>
-                        {warning['message']}
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Display result
-            st.markdown("---")
-            st.markdown("### 📋 الجدول النهائي")
-            
-            # Editable dataframe
-            edited_df = st.data_editor(
-                result_df,
-                use_container_width=True,
-                num_rows="dynamic",
-                hide_index=True
+            # Simple bar chart
+            st.bar_chart(load_df.set_index('اسم المعلمة'))
+        
+        # Export options
+        st.markdown("---")
+        st.markdown("### 💾 تصدير الجدول")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Export to Excel
+            excel_buffer = export_to_excel(result_df, school_name, selected_level)
+            st.download_button(
+                label="📥 تصدير Excel",
+                data=excel_buffer,
+                file_name=f"جدول_المراقبة_{selected_level}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
             )
-            
-            # Export buttons
-            st.markdown("---")
-            st.markdown("### 💾 تصدير الجدول")
-            col1, col2, col3 = st.columns([1, 1, 2])
-            
-            with col1:
-                # Excel export
-                excel_data = export_to_excel(edited_df)
-                if excel_data:
-                    st.download_button(
-                        label="📥 تصدير Excel",
-                        data=excel_data,
-                        file_name=f"supervision_schedule_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-            
-            with col2:
-                # PDF export
-                pdf_data = export_to_pdf(edited_df, school_name=school_name)
-                if pdf_data:
-                    st.download_button(
-                        label="📄 تصدير PDF",
-                        data=pdf_data,
-                        file_name=f"supervision_schedule_{datetime.now().strftime('%Y%m%d')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-        else:
-            st.warning("⚠️ لم يتم إنشاء أي توزيع. تحقق من البيانات المدخلة.")
+        
+        with col2:
+            # Export to PDF
+            pdf_buffer = export_to_pdf(result_df, school_name, selected_level)
+            st.download_button(
+                label="📄 تصدير PDF",
+                data=pdf_buffer,
+                file_name=f"جدول_المراقبة_{selected_level}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: #666; padding: 20px;'>
+        <p>تم التطوير بواسطة: <strong>سحر عثمان</strong> - منسقة المشاريع الإلكترونية</p>
+        <p>مدرسة عثمان بن عفان النموذجية للبنين - وزارة التعليم والتعليم العالي - دولة قطر 🇶🇦</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

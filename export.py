@@ -16,7 +16,7 @@ from datetime import datetime
 import io
 
 
-def export_to_excel(df, filename="supervision_schedule.xlsx"):
+def export_to_excel(df, school_name="مدرسة عثمان بن عفان", level=""):
     """Export DataFrame to Excel with formatting"""
     if df.empty:
         return None
@@ -60,7 +60,7 @@ def export_to_excel(df, filename="supervision_schedule.xlsx"):
     return output
 
 
-def export_to_pdf(df, school_name="مدرسة عثمان بن عفان", filename="supervision_schedule.pdf"):
+def export_to_pdf(df, school_name="مدرسة عثمان بن عفان", level=""):
     """Export DataFrame to PDF with Arabic support"""
     if df.empty:
         return None
@@ -112,7 +112,8 @@ def export_to_pdf(df, school_name="مدرسة عثمان بن عفان", filenam
     title = Paragraph(f"<b>{school_name}</b>", title_style)
     content.append(title)
     
-    subtitle = Paragraph("جدول المراقبة للاختبارات", subtitle_style)
+    subtitle_text = f"جدول المراقبة للاختبارات - {level}" if level else "جدول المراقبة للاختبارات"
+    subtitle = Paragraph(subtitle_text, subtitle_style)
     content.append(subtitle)
     
     date_text = Paragraph(f"تاريخ الإصدار: {datetime.now().strftime('%Y-%m-%d')}", subtitle_style)
