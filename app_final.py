@@ -234,6 +234,36 @@ def main():
     try:
         # Load teachers
         teachers_df = pd.read_excel(teachers_file)
+        
+        # Normalize column names (support both Arabic and English)
+        column_mapping = {
+            'اسم المعلم': 'teacher_name',
+            'اسم المعلمة': 'teacher_name',
+            'teacher_name': 'teacher_name',
+            'المادة الدراسية': 'specialty',
+            'التخصص': 'specialty',
+            'specialty': 'specialty',
+            'الحد الأقصى لليوم': 'max_per_day',
+            'max_per_day': 'max_per_day'
+        }
+        
+        # Rename columns
+        for old_col, new_col in column_mapping.items():
+            if old_col in teachers_df.columns:
+                teachers_df.rename(columns={old_col: new_col}, inplace=True)
+        
+        # Ensure required columns exist
+        if 'teacher_name' not in teachers_df.columns:
+            st.error("❌ ملف المعلمات يجب أن يحتوي على عمود 'اسم المعلم' أو 'اسم المعلمة' أو 'teacher_name'")
+            return
+        
+        # Add specialty if missing
+        if 'specialty' not in teachers_df.columns:
+            teachers_df['specialty'] = ''
+        
+        # Remove duplicates (keep unique teachers)
+        teachers_df = teachers_df[['teacher_name', 'specialty']].drop_duplicates()
+        
         st.success(f"✅ تم تحميل {len(teachers_df)} معلمة")
         
         # Load and parse exam schedule
